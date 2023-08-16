@@ -1,0 +1,5 @@
+procs:
+    client:
+        shell: "npm start"
+    server:
+        shell: "python3 datafeed/server3.py"
