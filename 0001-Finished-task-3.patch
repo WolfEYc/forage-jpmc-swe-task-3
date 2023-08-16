@@ -1,0 +1,271 @@
+From 82cf8b880e1cff20366f1ddb645c80094ead9400 Mon Sep 17 00:00:00 2001
+From: Isaac Wolf <isaac.wolf@live.com>
+Date: Wed, 16 Aug 2023 11:15:42 -0500
+Subject: [PATCH] Finished task 3
+
+---
+ src/App.tsx            | 83 +++++++++++++++++++++++++++++++-----------
+ src/DataManipulator.ts | 57 ++++++++++++++++++++++++-----
+ src/Graph.tsx          | 32 ++++++++++------
+ 3 files changed, 129 insertions(+), 43 deletions(-)
+
+diff --git a/src/App.tsx b/src/App.tsx
+index 274d20b..19b12e6 100755
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -3,53 +3,92 @@ import DataStreamer, { ServerRespond } from './DataStreamer';
+ import Graph from './Graph';
+ import './App.css';
+ 
++/**
++ * State declaration for <App />
++ */
+ interface IState {
+   data: ServerRespond[],
+-  showGraph: boolean,
++  showGraph: boolean
++  interval: NodeJS.Timeout | undefined
+ }
+ 
++/**
++ * The parent element of the react app.
++ * It renders title, button and Graph react element.
++ */
+ class App extends Component<{}, IState> {
+   constructor(props: {}) {
+     super(props);
++
+     this.state = {
++      // data saves the server responds.
++      // We use this state to parse data down to the child element (Graph) as element property
+       data: [],
+       showGraph: false,
++      interval: undefined
+     };
+   }
+ 
++  /**
++   * Render Graph react component with state.data parse as property data
++   */
+   renderGraph() {
+-    if (this.state.showGraph) {
+-      return (<Graph data={this.state.data}/>)
+-    }
++    if (!this.state.showGraph) return <></>
++
++    return (
++      <div className="Graph">
++        <Graph data={this.state.data} />
++      </div>
++    )
+   }
+ 
++  /**
++   * Get new data from server and update the state with the new data
++   */
+   getDataFromServer() {
+-    let x = 0;
+-    const interval = setInterval(() => {
+-      DataStreamer.getData((serverResponds: ServerRespond[]) => {
+-        this.setState({
+-          data: serverResponds,
+-          showGraph: true,
+-        });
+-      });
+-      x++;
+-      if (x > 1000) {
+-        clearInterval(interval);
+-      }
+-    }, 100);
++    DataStreamer.getData((serverResponds: ServerRespond[]) => {
++      // Update the state by creating a new array of data that consists of
++      // Previous data in the state and the new data from server
++      this.setState({ ...this.state, data: [...this.state.data, ...serverResponds] });
++    });
++  }
++
++  streamDataFromServer() {
++    const interval = setInterval(() => { this.getDataFromServer() }, 100);
++    this.setState({ ...this.state, showGraph: true, interval: interval })
++
++  }
++
++  toggleStream() {
++    if (this.state.interval == undefined) {
++      this.streamDataFromServer()
++      return
++    }
++
++    clearInterval(this.state.interval);
++    this.setState({ ...this.state, interval: undefined })
+   }
+ 
++  /**
++   * Render the App react component
++   */
+   render() {
+     return (
+       <div className="App">
+         <header className="App-header">
+-          Bank Merge & Co Task 3
++          Bank & Merge Co Task 3
+         </header>
+         <div className="App-content">
+-          <button className="btn btn-primary Stream-button" onClick={() => {this.getDataFromServer()}}>Start Streaming Data</button>
+-          <div className="Graph">
+-            {this.renderGraph()}
+-          </div>
++          <button className="btn btn-primary Stream-button"
++            // when button is click, our react app tries to request
++            // new data from the server.
++            // As part of your task, update the getDataFromServer() function
++            // to keep requesting the data every 100ms until the app is closed
++            // or the server does not return anymore data.
++            onClick={() => { this.toggleStream() }}>
++            Start Streaming Data
++          </button>
++          {this.renderGraph()}
+         </div>
+       </div>
+     )
+diff --git a/src/DataManipulator.ts b/src/DataManipulator.ts
+index 7f62295..ff91dc9 100644
+--- a/src/DataManipulator.ts
++++ b/src/DataManipulator.ts
+@@ -1,20 +1,57 @@
+ import { ServerRespond } from './DataStreamer';
+ 
+ export interface Row {
+-  stock: string,
+-  top_ask_price: number,
++  price_abc: number,
++  price_def: number,
++  ratio: number,
+   timestamp: Date,
++  upper_bound: number,
++  lower_bound: number,
++  trigger_alert: number | undefined
+ }
+ 
++const THRESHOLD = 0.05;
+ 
+ export class DataManipulator {
+-  static generateRow(serverResponds: ServerRespond[]) {
+-    return serverResponds.map((el: any) => {
+-      return {
+-        stock: el.stock,
+-        top_ask_price: el.top_ask && el.top_ask.price || 0,
+-        timestamp: el.timestamp,
+-      };
+-    })
++  static getDate(stockA: ServerRespond, stockB: ServerRespond) {
++    const a = stockA.timestamp;
++    const b = stockB.timestamp;
++    return a > b ? a : b
++  }
++
++  static getPrice(stock: ServerRespond) {
++    return (stock.top_ask.price + stock.top_bid.price) / 2
++  }
++
++  static getTriggerAlert(ratio: number, lower_bound: number, upper_bound: number) {
++    return ratio > lower_bound && ratio < upper_bound ? undefined : ratio
++  }
++
++  static getBounds() {
++    return [1 - THRESHOLD, 1 + THRESHOLD];
++  }
++
++  static generateRow(serverResponds: ServerRespond[]): Row {
++    const stockA = serverResponds[serverResponds.length - 2]
++    const stockB = serverResponds[serverResponds.length - 1]
++
++    const price_abc = this.getPrice(stockA);
++    const price_def = this.getPrice(stockB);
++    const ratio = price_abc / price_def
++    const [lower_bound, upper_bound] = this.getBounds();
++    const timestamp = this.getDate(stockA, stockB);
++    const trigger_alert = this.getTriggerAlert(ratio, lower_bound, upper_bound);
++
++    console.log(serverResponds.length)
++
++    return {
++      price_abc,
++      price_def,
++      ratio,
++      timestamp,
++      upper_bound,
++      lower_bound,
++      trigger_alert
++    }
+   }
+ }
+diff --git a/src/Graph.tsx b/src/Graph.tsx
+index 277797d..d6c56ef 100644
+--- a/src/Graph.tsx
++++ b/src/Graph.tsx
+@@ -1,5 +1,5 @@
+ import React, { Component } from 'react';
+-import { Table } from '@finos/perspective';
++import { Table, TableData } from '@finos/perspective';
+ import { ServerRespond } from './DataStreamer';
+ import { DataManipulator } from './DataManipulator';
+ import './Graph.css';
+@@ -23,10 +23,13 @@ class Graph extends Component<IProps, {}> {
+     const elem = document.getElementsByTagName('perspective-viewer')[0] as unknown as PerspectiveViewerElement;
+ 
+     const schema = {
+-      stock: 'string',
+-      top_ask_price: 'float',
+-      top_bid_price: 'float',
++      price_abc: 'float',
++      price_def: 'float',
++      ratio: 'float',
+       timestamp: 'date',
++      upper_bound: 'float',
++      lower_bound: 'float',
++      trigger_alert: 'float'
+     };
+ 
+     if (window.perspective && window.perspective.worker()) {
+@@ -36,23 +39,30 @@ class Graph extends Component<IProps, {}> {
+       // Load the `table` in the `<perspective-viewer>` DOM reference.
+       elem.load(this.table);
+       elem.setAttribute('view', 'y_line');
+-      elem.setAttribute('column-pivots', '["stock"]');
+       elem.setAttribute('row-pivots', '["timestamp"]');
+-      elem.setAttribute('columns', '["top_ask_price"]');
++      elem.setAttribute('columns', JSON.stringify([
++        'ratio',
++        'lower_bound',
++        'upper_bound',
++        'trigger_alert'
++      ]));
+       elem.setAttribute('aggregates', JSON.stringify({
+-        stock: 'distinctcount',
+-        top_ask_price: 'avg',
+-        top_bid_price: 'avg',
++        price_abc: 'avg',
++        price_def: 'avg',
++        ratio: 'avg',
+         timestamp: 'distinct count',
++        lower_bound: 'avg',
++        upper_bound: 'avg',
++        trigger_alert: 'avg'
+       }));
+     }
+   }
+ 
+   componentDidUpdate() {
+     if (this.table) {
+-      this.table.update(
++      this.table.update([
+         DataManipulator.generateRow(this.props.data),
+-      );
++      ] as unknown as TableData);
+     }
+   }
+ }
+-- 
+2.34.1
+
